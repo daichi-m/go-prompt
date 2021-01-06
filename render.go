@@ -1,9 +1,13 @@
 package prompt
 
 import (
+	"fmt"
 	"runtime"
+	"strings"
 
-	"github.com/c-bata/go-prompt/internal/debug"
+	"github.com/daichi-m/go-prompt/internal/debug"
+	"github.com/fatih/color"
+	fcolor "github.com/fatih/color"
 	runewidth "github.com/mattn/go-runewidth"
 )
 
@@ -11,31 +15,27 @@ import (
 type Render struct {
 	out                ConsoleWriter
 	prefix             string
-	livePrefixCallback func() (prefix string, useLivePrefix bool)
+	livePrefixCallback func() (prefix string, ok bool)
 	breakLineCallback  func(*Document)
+	statusBarCallback  func(*Buffer, *CompletionManager) (status string, ok bool)
 	title              string
 	row                uint16
 	col                uint16
-
-	previousCursor int
+	previousCursor     int
+	keywords           map[string]bool
 
 	// colors,
-	prefixTextColor              Color
-	prefixBGColor                Color
-	inputTextColor               Color
-	inputBGColor                 Color
-	previewSuggestionTextColor   Color
-	previewSuggestionBGColor     Color
-	suggestionTextColor          Color
-	suggestionBGColor            Color
-	selectedSuggestionTextColor  Color
-	selectedSuggestionBGColor    Color
-	descriptionTextColor         Color
-	descriptionBGColor           Color
-	selectedDescriptionTextColor Color
-	selectedDescriptionBGColor   Color
-	scrollbarThumbColor          Color
-	scrollbarBGColor             Color
+	prefixColor              *fcolor.Color
+	inputColor               *fcolor.Color
+	keywordColor             *fcolor.Color
+	previewSuggestionColor   *fcolor.Color
+	suggestionColor          *fcolor.Color
+	selectedSuggestionColor  *fcolor.Color
+	descriptionColor         *fcolor.Color
+	selectedDescriptionColor *fcolor.Color
+	statusBarColor           *fcolor.Color
+	scrollbarColor           *fcolor.Color
+	scrollbarThumbColor      *fcolor.Color
 }
 
 // Setup to initialize console output.
@@ -56,9 +56,7 @@ func (r *Render) getCurrentPrefix() string {
 }
 
 func (r *Render) renderPrefix() {
-	r.out.SetColor(r.prefixTextColor, r.prefixBGColor, false)
-	r.out.WriteStr(r.getCurrentPrefix())
-	r.out.SetColor(DefaultColor, DefaultColor, false)
+	r.out.WriteStr(r.getCurrentPrefix(), r.prefixColor)
 }
 
 // TearDown to clear title and erasing.
@@ -86,8 +84,7 @@ func (r *Render) UpdateWinSize(ws *WinSize) {
 func (r *Render) renderWindowTooSmall() {
 	r.out.CursorGoTo(0, 0)
 	r.out.EraseScreen()
-	r.out.SetColor(DarkRed, White, false)
-	r.out.WriteStr("Your console window is too small...")
+	r.out.WriteStr("Your console window is too small...", color.New(color.FgHiRed, color.BgWhite))
 }
 
 func (r *Render) renderCompletion(buf *Buffer, completions *CompletionManager) {
@@ -111,17 +108,18 @@ func (r *Render) renderCompletion(buf *Buffer, completions *CompletionManager) {
 	r.prepareArea(windowHeight)
 
 	cursor := runewidth.StringWidth(prefix) + runewidth.StringWidth(buf.Document().TextBeforeCursor())
-	x, _ := r.toPos(cursor)
+	x, y := r.toPos(cursor)
 	if x+width >= int(r.col) {
 		cursor = r.backward(cursor, x+width-int(r.col))
 	}
+	debug.Log(fmt.Sprintf("Cursor position for render completion: %d,%d\n", x, y))
 
 	contentHeight := len(completions.tmp)
 
 	fractionVisible := float64(windowHeight) / float64(contentHeight)
 	fractionAbove := float64(completions.verticalScroll) / float64(contentHeight)
 
-	scrollbarHeight := int(clamp(float64(windowHeight), 1, float64(windowHeight)*fractionVisible))
+	scrollbarHeight := int(clamp(float64(windowHeight)*fractionVisible, float64(windowHeight), 1))
 	scrollbarTop := int(float64(windowHeight) * fractionAbove)
 
 	isScrollThumb := func(row int) bool {
@@ -129,30 +127,31 @@ func (r *Render) renderCompletion(buf *Buffer, completions *CompletionManager) {
 	}
 
 	selected := completions.selected - completions.verticalScroll
-	r.out.SetColor(White, Cyan, false)
+	// r.out.SetColor(White, Cyan, false)
 	for i := 0; i < windowHeight; i++ {
 		r.out.CursorDown(1)
+		var color *fcolor.Color
 		if i == selected {
-			r.out.SetColor(r.selectedSuggestionTextColor, r.selectedSuggestionBGColor, true)
+			color = r.selectedSuggestionColor.Add(fcolor.Bold)
 		} else {
-			r.out.SetColor(r.suggestionTextColor, r.suggestionBGColor, false)
+			color = r.selectedDescriptionColor
 		}
-		r.out.WriteStr(formatted[i].Text)
+		r.out.WriteStr(formatted[i].Text, color)
 
 		if i == selected {
-			r.out.SetColor(r.selectedDescriptionTextColor, r.selectedDescriptionBGColor, false)
+			color = r.selectedDescriptionColor
 		} else {
-			r.out.SetColor(r.descriptionTextColor, r.descriptionBGColor, false)
+			color = r.descriptionColor
 		}
-		r.out.WriteStr(formatted[i].Description)
+		r.out.WriteStr(formatted[i].Description, color)
 
 		if isScrollThumb(i) {
-			r.out.SetColor(DefaultColor, r.scrollbarThumbColor, false)
+			color = r.scrollbarThumbColor
 		} else {
-			r.out.SetColor(DefaultColor, r.scrollbarBGColor, false)
+			color = r.scrollbarColor
 		}
-		r.out.WriteStr(" ")
-		r.out.SetColor(DefaultColor, DefaultColor, false)
+		r.out.WriteStr(" ", color)
+		// r.out.SetColor(DefaultColor, DefaultColor, false)
 
 		r.lineWrap(cursor + width)
 		r.backward(cursor+width, width)
@@ -163,17 +162,94 @@ func (r *Render) renderCompletion(buf *Buffer, completions *CompletionManager) {
 	}
 
 	r.out.CursorUp(windowHeight)
-	r.out.SetColor(DefaultColor, DefaultColor, false)
+}
+
+func (r *Render) renderSelectSuggestionInBuffer(buffer *Buffer, suggest Suggest, cursorStart int) (cursor int) {
+
+	cursor = cursorStart
+	// r.out.SetColor(r.previewSuggestionTextColor, r.previewSuggestionBGColor, false)
+	r.out.WriteStr(suggest.Text, r.previewSuggestionColor)
+	// r.out.SetColor(DefaultColor, DefaultColor, false)
+	cursor += runewidth.StringWidth(suggest.Text)
+
+	rest := buffer.Document().TextAfterCursor()
+	r.out.WriteStr(rest, nil)
+	cursor += runewidth.StringWidth(rest)
+	r.lineWrap(cursor)
+
+	cursor = r.backward(cursor, runewidth.StringWidth(rest))
+	return
+}
+
+func (r *Render) renderStatusBar(buffer *Buffer, completion *CompletionManager) {
+
+	r.out.SaveCursor()
+	defer func() {
+		r.out.UnSaveCursor()
+		r.out.CursorUp(0)
+	}()
+
+	if status, ok := r.statusBarCallback(buffer, completion); ok {
+		r.out.CursorDown(int(r.row))
+		r.out.CursorBackward(int(r.col))
+		fs, _ := formatTexts([]string{status}, int(r.col-2), "", "")
+		if len(fs) == 0 {
+			return
+		}
+		fs = padTexts(fs, " ", int(r.col))
+		r.out.WriteStr(fs[0], r.statusBarColor)
+	}
+
+}
+
+func padTexts(orig []string, pad string, length int) []string {
+
+	pl := len(pad)
+	if pl <= 0 {
+		return orig
+	}
+	if len(orig) == 0 {
+		tot, mod := length/pl, length%pl
+		return []string{strings.Repeat(pad, tot) + pad[0:mod]}
+	}
+	padded := make([]string, 0, len(orig))
+
+	for _, o := range orig {
+		fillLen := length - len(o)
+		tot, mod := fillLen/pl, fillLen%pl
+		p := strings.Repeat(pad, tot) + pad[0:mod]
+		padded = append(padded, o+p)
+	}
+	return padded
+
+}
+
+func (r *Render) renderLine(line string) {
+	words := strings.Split(line, " ")
+	l := len(words)
+	for i, w := range words {
+		lw := strings.ToLower(w)
+		if _, ok := r.keywords[lw]; ok {
+			r.out.WriteStr(w, r.keywordColor)
+		} else if len(w) > 0 {
+			r.out.WriteStr(w, r.inputColor)
+		}
+		if i < l-1 {
+			r.out.WriteStr(" ", r.inputColor)
+		}
+	}
 }
 
 // Render renders to the console.
 func (r *Render) Render(buffer *Buffer, completion *CompletionManager) {
 	// In situations where a pseudo tty is allocated (e.g. within a docker container),
 	// window size via TIOCGWINSZ is not immediately available and will result in 0,0 dimensions.
+	debug.Log(fmt.Sprintf("Window size in which to render: (%d x %d)", r.row, r.col))
 	if r.col == 0 {
 		return
 	}
 	defer func() { debug.AssertNoError(r.out.Flush()) }()
+	r.prepareArea(2)
 	r.move(r.previousCursor, 0)
 
 	line := buffer.Text()
@@ -194,9 +270,7 @@ func (r *Render) Render(buffer *Buffer, completion *CompletionManager) {
 	defer r.out.ShowCursor()
 
 	r.renderPrefix()
-	r.out.SetColor(r.inputTextColor, r.inputBGColor, false)
-	r.out.WriteStr(line)
-	r.out.SetColor(DefaultColor, DefaultColor, false)
+	r.renderLine(line)
 	r.lineWrap(cursor)
 
 	r.out.EraseDown()
@@ -204,20 +278,11 @@ func (r *Render) Render(buffer *Buffer, completion *CompletionManager) {
 	cursor = r.backward(cursor, runewidth.StringWidth(line)-buffer.DisplayCursorPosition())
 
 	r.renderCompletion(buffer, completion)
+	r.renderStatusBar(buffer, completion)
 	if suggest, ok := completion.GetSelectedSuggestion(); ok {
-		cursor = r.backward(cursor, runewidth.StringWidth(buffer.Document().GetWordBeforeCursorUntilSeparator(completion.wordSeparator)))
-
-		r.out.SetColor(r.previewSuggestionTextColor, r.previewSuggestionBGColor, false)
-		r.out.WriteStr(suggest.Text)
-		r.out.SetColor(DefaultColor, DefaultColor, false)
-		cursor += runewidth.StringWidth(suggest.Text)
-
-		rest := buffer.Document().TextAfterCursor()
-		r.out.WriteStr(rest)
-		cursor += runewidth.StringWidth(rest)
-		r.lineWrap(cursor)
-
-		cursor = r.backward(cursor, runewidth.StringWidth(rest))
+		cursor = r.backward(cursor, runewidth.StringWidth(
+			buffer.Document().GetWordBeforeCursorUntilSeparator(completion.wordSeparator)))
+		cursor = r.renderSelectSuggestionInBuffer(buffer, suggest, cursor)
 	}
 	r.previousCursor = cursor
 }
@@ -228,9 +293,8 @@ func (r *Render) BreakLine(buffer *Buffer) {
 	cursor := runewidth.StringWidth(buffer.Document().TextBeforeCursor()) + runewidth.StringWidth(r.getCurrentPrefix())
 	r.clear(cursor)
 	r.renderPrefix()
-	r.out.SetColor(r.inputTextColor, r.inputBGColor, false)
-	r.out.WriteStr(buffer.Document().Text + "\n")
-	r.out.SetColor(DefaultColor, DefaultColor, false)
+	r.renderLine(buffer.Document().Text)
+	r.out.WriteStr("\n", r.inputColor)
 	debug.AssertNoError(r.out.Flush())
 	if r.breakLineCallback != nil {
 		r.breakLineCallback(buffer.Document())
@@ -271,11 +335,12 @@ func (r *Render) toPos(cursor int) (x, y int) {
 
 func (r *Render) lineWrap(cursor int) {
 	if runtime.GOOS != "windows" && cursor > 0 && cursor%int(r.col) == 0 {
-		r.out.WriteRaw([]byte{'\n'})
+		r.out.WriteStr("\n", nil)
 	}
 }
 
-func clamp(high, low, x float64) float64 {
+// clamp ensures that x is within the limit of low and high.
+func clamp(x, high, low float64) float64 {
 	switch {
 	case high < x:
 		return high
