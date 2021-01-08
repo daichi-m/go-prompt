@@ -32,9 +32,12 @@ jobs:
       env:
         GO111MODULE: on
       run: go test -race -covermode atomic -coverprofile coverage.txt ../..
+    - name: Coverage report upload
+      run: bash <(curl -s https://codecov.io/bash)
 
   build:
     name: "Build package"
+    needs: "test"
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -52,8 +55,6 @@ jobs:
         env: 
           GO111MODULE: on
         run: go build
-      - name: Code coverage
-        run: bash <(curl -s https://codecov.io/bash)
 
 
   # examples:
