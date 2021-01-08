@@ -31,7 +31,7 @@ jobs:
     - name: Running go tests
       env:
         GO111MODULE: on
-      run: go test -race -covermode atomic -coverprofile coverage.txt ../..
+      run: go test -race -covermode atomic -coverprofile coverage.txt .
     - name: Coverage report upload
       run: bash <(curl -s https://codecov.io/bash)
 
