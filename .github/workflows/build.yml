@@ -1,6 +1,9 @@
 name: build
 on:
   pull_request:
+<<<<<<< HEAD
+    branches: "*"
+=======
     branches: 
       - main
       - develop
@@ -9,6 +12,7 @@ on:
       - main
       - develop
       - status-box
+>>>>>>> master
 
 jobs:
   test:
@@ -37,7 +41,11 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
+<<<<<<< HEAD
+        go: [1.13, 1.14. 1.15]
+=======
         go: [1.13, 1.14, 1.15]
+>>>>>>> master
     steps:
       - name: Set up Go
         uses: actions/setup-go@v2
