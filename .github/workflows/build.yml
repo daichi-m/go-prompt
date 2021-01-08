@@ -1,9 +1,6 @@
 name: build
 on:
   pull_request:
-<<<<<<< HEAD
-    branches: "*"
-=======
     branches: 
       - main
       - develop
@@ -12,7 +9,6 @@ on:
       - main
       - develop
       - status-box
->>>>>>> master
 
 jobs:
   test:
