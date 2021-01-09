@@ -5,22 +5,22 @@ GO111MODULE ?= on
 GOBIN ?= go
 
 
-.PHONY setup
+.PHONY: setup
 setup:
 	$(GOBIN) install $(GOBIN)lang.org/x/tools/cmd/$(GOBIN)imports
 	$(GOBIN) get -u
 
-.PHONY fmt
-fmt: $(SOURCES)
-	$(GOBIN)imports -w $^
+.PHONY: fmt
+fmt:
+	goimports -w .
 
-.PHONY tests
+.PHONY: tests
 tests: 
 	$(GOBIN) test -race -covermode atomic -coverprofile coverage.txt .
 
-.PHONY build
-build:
+.PHONY: build
+build: setup fmt
 	$(GOBIN) build .
 
-.PHONY all
+.PHONY: all
 all: setup fmt tests build

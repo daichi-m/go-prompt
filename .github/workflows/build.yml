@@ -56,7 +56,7 @@ jobs:
       - name: Build
         env: 
           GO111MODULE: on
-        run: make all
+        run: make build
 
 
   # examples:
