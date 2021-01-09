@@ -1,46 +1,26 @@
-.DEFAULT_GOAL := help
+.DEFAULT_GOAL := all
+SOURCES := $(shell find . -prune -o -name "*.$(GOBIN)" -not -name '*_test.$(GOBIN)' -print)
 
-SOURCES := $(shell find . -prune -o -name "*.go" -not -name '*_test.go' -print)
+GO111MODULE ?= on
+GOBIN ?= go
 
-GOIMPORTS ?= goimports
-GOCILINT ?= golangci-lint
 
-.PHONY: setup
-setup:  ## Setup for required tools.
-	go get -u golang.org/x/tools/cmd/goimports
-	go get -u github.com/golangci/golangci-lint/cmd/golangci-lint
-	go get -u golang.org/x/tools/cmd/stringer
+.PHONY setup
+setup:
+	$(GOBIN) install $(GOBIN)lang.org/x/tools/cmd/$(GOBIN)imports
+	$(GOBIN) get -u
 
-.PHONY: fmt
-fmt: $(SOURCES) ## Formatting source codes.
-	@$(GOIMPORTS) -w $^
+.PHONY fmt
+fmt: $(SOURCES)
+	$(GOBIN)imports -w $^
 
-.PHONY: lint
-lint: ## Run golangci-lint.
-	@$(GOCILINT) run --no-config --disable-all --enable=goimports --enable=misspell ./...
+.PHONY tests
+tests: 
+	$(GOBIN) test -race -covermode atomic -coverprofile coverage.txt .
 
-.PHONY: test
-test:  ## Run tests with race condition checking.
-	@go test -race ./...
+.PHONY build
+build:
+	$(GOBIN) build .
 
-.PHONY: bench
-bench:  ## Run benchmarks.
-	@go test -bench=. -run=- -benchmem ./...
-
-.PHONY: coverage
-cover:  ## Run the tests.
-	@go test -coverprofile=coverage.o
-	@go tool cover -func=coverage.o
-
-.PHONY: generate
-generate: ## Run go generate
-	@go generate ./...
-
-.PHONY: build
-build: ## Build example command lines.
-	./_example/build.sh
-
-.PHONY: help
-help: ## Show help text
-	@echo "Commands:"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
+.PHONY all
+all: setup fmt tests build

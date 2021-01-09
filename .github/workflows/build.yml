@@ -31,9 +31,11 @@ jobs:
     - name: Running go tests
       env:
         GO111MODULE: on
-      run: go test -race -covermode atomic -coverprofile coverage.txt .
+      run: make tests
     - name: Coverage report upload
-      run: bash <(curl -s https://codecov.io/bash)
+      uses: codecov/codecov-action@v1
+      with: 
+        fail_ci_if_error: false
 
   build:
     name: "Build package"
@@ -41,7 +43,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-18.04, macos-10.15]
         go: [1.13, 1.14, 1.15]
     steps:
       - name: Set up Go
@@ -54,7 +56,7 @@ jobs:
       - name: Build
         env: 
           GO111MODULE: on
-        run: go build
+        run: make all
 
 
   # examples:
